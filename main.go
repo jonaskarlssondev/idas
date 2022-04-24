@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"idas/grants"
 	"log"
 	"net/http"
@@ -109,8 +108,6 @@ func token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("Response: %+v\n", response)
-	fmt.Printf("Error: %+v\n", reqErr)
 	WriteResponse(w, response, http.StatusOK)
 }
 

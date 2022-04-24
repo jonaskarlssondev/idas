@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestPKCE(t *testing.T) {
+func TestValidRequests(t *testing.T) {
 	s := NewStore()
 	requests := []AuthorizationRequest{
 		{
@@ -38,7 +38,7 @@ func TestPKCE(t *testing.T) {
 		dontWantCode := ""
 
 		if gotState != wantState {
-			t.Errorf("Expected state to be %s, got %s", wantState, gotState)
+			t.Errorf("Expected state to be '%s', got '%s'", wantState, gotState)
 		}
 
 		if gotCode == dontWantCode {

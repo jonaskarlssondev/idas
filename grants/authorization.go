@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Authorization code flow request input
 type AuthorizationRequest struct {
 	ResponseType        string
 	ClientId            string
@@ -15,6 +16,13 @@ type AuthorizationRequest struct {
 	CodeChallengeMethod string
 }
 
+// Authorization code flow response output
+type AuthorizationResponse struct {
+	Code  string
+	State string
+}
+
+// Authorization code flow cross-request information
 type AuthorizationCodeChallengeAssociation struct {
 	Code                string
 	CodeChallenge       string
@@ -22,11 +30,6 @@ type AuthorizationCodeChallengeAssociation struct {
 	Scope               string
 	ClientId            string
 	RedirectUri         string
-}
-
-type AuthorizationResponse struct {
-	Code  string
-	State string
 }
 
 // Authorization is the entry point for the authorization grant process.
@@ -43,6 +46,7 @@ func Authorization(s *Store, r *AuthorizationRequest) (*AuthorizationResponse, *
 		return nil, authzError
 	}
 
+	// generates reasonably random code of length 32.
 	code := generateCode(32)
 
 	state := AuthorizationCodeChallengeAssociation{
@@ -54,8 +58,10 @@ func Authorization(s *Store, r *AuthorizationRequest) (*AuthorizationResponse, *
 		RedirectUri:         r.RedirectUri,
 	}
 
+	// Persist required information for the following expected token request
 	s.Acca[code] = state
 
+	// Delete code after 1 minute
 	defer func() {
 		go sleepDelete(s, code)
 	}()
@@ -68,6 +74,7 @@ func Authorization(s *Store, r *AuthorizationRequest) (*AuthorizationResponse, *
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
+// Generate n length strings picking from the given assortment from letterBytes
 func generateCode(n int) string {
 	b := make([]byte, n)
 	for i := range b {
@@ -86,6 +93,7 @@ type ErrorResponse struct {
 	ErrorDescription string `json:"error_description"`
 }
 
+// Checks for the existing and valid request parameters and responds aligned with 5.2. of RFC 6749
 func validateAuthorizationRequest(r *AuthorizationRequest) *ErrorResponse {
 	if r.ResponseType != "code" {
 		return &ErrorResponse{
