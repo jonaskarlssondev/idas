@@ -1,11 +1,12 @@
-package grants
+package endpoints
 
 import (
+	"idas/store"
 	"testing"
 )
 
 func TestValidRequests(t *testing.T) {
-	s := NewStore()
+	s := store.NewStore()
 	requests := []AuthorizationRequest{
 		{
 			ResponseType:        "code",
@@ -26,7 +27,7 @@ func TestValidRequests(t *testing.T) {
 	}
 
 	for _, r := range requests {
-		response, err := Authorization(s, &r)
+		response, err := authorization(s, &r)
 		if err != nil {
 			t.Errorf("Did not expect an error: %+v", err)
 		}
@@ -48,7 +49,7 @@ func TestValidRequests(t *testing.T) {
 }
 
 func TestInvalidRequests(t *testing.T) {
-	s := NewStore()
+	s := store.NewStore()
 	requests := []AuthorizationRequest{
 		{
 			ResponseType: "not_code",
@@ -81,7 +82,7 @@ func TestInvalidRequests(t *testing.T) {
 	}
 
 	for _, r := range requests {
-		_, err := Authorization(s, &r)
+		_, err := authorization(s, &r)
 		if err == nil {
 			t.Errorf("Expected error for request: %+v", r)
 		}

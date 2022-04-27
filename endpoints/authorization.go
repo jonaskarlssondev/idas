@@ -1,7 +1,10 @@
-package grants
+package endpoints
 
 import (
+	"idas/store"
 	"math/rand"
+	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -18,25 +21,43 @@ type AuthorizationRequest struct {
 
 // Authorization code flow response output
 type AuthorizationResponse struct {
-	Code  string
-	State string
+	RedirectUri string
+	Code        string
+	State       string
 }
 
-// Authorization code flow cross-request information
-type AuthorizationCodeChallengeAssociation struct {
-	Code                string
-	CodeChallenge       string
-	CodeChallengeMethod string
-	Scope               string
-	ClientId            string
-	RedirectUri         string
+func AuthorizationEndpoint(w http.ResponseWriter, r *http.Request, s *store.Store) (*AuthorizationResponse, *ErrorResponse) {
+	redirect_uri, err := url.Parse(r.FormValue("redirect_uri"))
+	if err != nil {
+		return nil, &ErrorResponse{
+			Error:            "invalid_request",
+			ErrorDescription: "Invalid redirect_uri",
+		}
+	}
+
+	req := &AuthorizationRequest{
+		ResponseType:        r.FormValue("response_type"),
+		ClientId:            r.FormValue("client_id"),
+		RedirectUri:         redirect_uri.String(),
+		Scope:               r.FormValue("scope"),
+		State:               r.FormValue("state"),
+		CodeChallenge:       r.FormValue("code_challenge"),
+		CodeChallengeMethod: r.FormValue("code_challenge_method"),
+	}
+
+	response, authzError := authorization(s, req)
+	if authzError != nil {
+		return nil, authzError
+	}
+
+	return response, nil
 }
 
 // Authorization is the entry point for the authorization grant process.
 //
 // It currently only supports the "code" response type as part of the authorization code flow with PKCE.
 // The code is valid for 1 minute.
-func Authorization(s *Store, r *AuthorizationRequest) (*AuthorizationResponse, *ErrorResponse) {
+func authorization(s *store.Store, r *AuthorizationRequest) (*AuthorizationResponse, *ErrorResponse) {
 	if r.CodeChallengeMethod == "" {
 		r.CodeChallengeMethod = "plain"
 	}
@@ -49,7 +70,7 @@ func Authorization(s *Store, r *AuthorizationRequest) (*AuthorizationResponse, *
 	// generates reasonably random code of length 32.
 	code := generateCode(32)
 
-	state := AuthorizationCodeChallengeAssociation{
+	state := store.AuthorizationCodeChallengeAssociation{
 		Code:                code,
 		CodeChallenge:       r.CodeChallenge,
 		CodeChallengeMethod: r.CodeChallengeMethod,
@@ -67,8 +88,9 @@ func Authorization(s *Store, r *AuthorizationRequest) (*AuthorizationResponse, *
 	}()
 
 	return &AuthorizationResponse{
-		Code:  code,
-		State: r.State,
+		RedirectUri: r.RedirectUri,
+		Code:        code,
+		State:       r.State,
 	}, nil
 }
 
@@ -83,7 +105,7 @@ func generateCode(n int) string {
 	return string(b)
 }
 
-func sleepDelete(s *Store, code string) {
+func sleepDelete(s *store.Store, code string) {
 	time.Sleep(time.Minute)
 	delete(s.Acca, code)
 }

@@ -1,13 +1,17 @@
-package grants
+package endpoints
 
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"fmt"
+	"idas/crypto"
+	"idas/store"
+	"net/http"
+	"net/url"
 
 	"github.com/golang-jwt/jwt"
 )
 
+// Token endpoint request input
 type TokenRequest struct {
 	GrantType    string
 	Code         string
@@ -16,12 +20,7 @@ type TokenRequest struct {
 	CodeVerifier string
 }
 
-type IssuedRefreshToken struct {
-	refreshToken         string
-	IssuedAt             int64
-	refreshTokenLifetime int64
-}
-
+// Token endpoint response output
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -30,11 +29,47 @@ type TokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
+func TokenEndpoint(w http.ResponseWriter, r *http.Request, s *store.Store) (*TokenResponse, *ErrorResponse) {
+	// If the code exists, it should be deleted to prevent replay attacks
+	code := r.FormValue("code")
+	defer delete(s.Acca, code)
+
+	_, ok := s.Acca[code]
+
+	// Validate that the code has been persisted as part of previous request and hasn't expired yet.
+	if !ok {
+		return nil, &ErrorResponse{
+			Error:            "invalid_request",
+			ErrorDescription: "Invalid code.",
+		}
+	}
+
+	// Parse redirect uri from the url encoded format.
+	redirect_uri, err := url.Parse(r.FormValue("redirect_uri"))
+	if err != nil {
+		return nil, &ErrorResponse{
+			Error:            "invalid_request",
+			ErrorDescription: "Invalid redirect_uri.",
+		}
+	}
+
+	req := &TokenRequest{
+		GrantType:    r.FormValue("grant_type"),
+		Code:         code,
+		RedirectUri:  redirect_uri.String(),
+		ClientId:     r.FormValue("client_id"),
+		CodeVerifier: r.FormValue("code_verifier"),
+	}
+
+	return token(s, req)
+
+}
+
 // Token processes requests to the /token endpoint.
 //
 // It currently only supports the 'authorization_code' grant type.
-func Token(s *Store, r *TokenRequest) (*TokenResponse, *ErrorResponse) {
-	var issued *IssuedRefreshToken
+func token(s *store.Store, r *TokenRequest) (*TokenResponse, *ErrorResponse) {
+	var issued *store.IssuedRefreshToken
 	var token string
 	var err *ErrorResponse
 
@@ -52,19 +87,20 @@ func Token(s *Store, r *TokenRequest) (*TokenResponse, *ErrorResponse) {
 		return nil, err
 	}
 
-	s.RefreshTokens[issued.refreshToken] = *issued
+	s.RefreshTokens[issued.RefreshToken] = *issued
 
 	return &TokenResponse{
 		AccessToken:  token,
-		RefreshToken: issued.refreshToken,
+		RefreshToken: issued.RefreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    3600,
 		Scope:        "",
 	}, nil
 }
 
-func AuthorizationCodeGrantType(s *Store, r *TokenRequest) (*IssuedRefreshToken, string, *ErrorResponse) {
-	var issued IssuedRefreshToken
+// AuthorizationCodeGrantType processes requests to the /token endpoint for the 'authorization_code' grant type.
+func AuthorizationCodeGrantType(s *store.Store, r *TokenRequest) (*store.IssuedRefreshToken, string, *ErrorResponse) {
+	var issued store.IssuedRefreshToken
 
 	acca, ok := s.Acca[r.Code]
 	if !ok {
@@ -92,11 +128,10 @@ func AuthorizationCodeGrantType(s *Store, r *TokenRequest) (*IssuedRefreshToken,
 		Subject:   r.ClientId,
 	}
 
-	at := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	token, err := at.SignedString([]byte("secret"))
-	if err != nil {
-		fmt.Print("Error signing token: ", err)
+	at := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 
+	token, err := at.SignedString(crypto.GetSigningKey())
+	if err != nil {
 		return &issued, "", &ErrorResponse{
 			Error:            "server_error",
 			ErrorDescription: "The authorization server failed to generate tokens.",
@@ -105,13 +140,12 @@ func AuthorizationCodeGrantType(s *Store, r *TokenRequest) (*IssuedRefreshToken,
 
 	refreshToken := generateCode(32)
 
-	issued = IssuedRefreshToken{
-		refreshToken:         refreshToken,
-		refreshTokenLifetime: 7776000, // 90 days
+	issued = store.IssuedRefreshToken{
+		RefreshToken:         refreshToken,
+		RefreshTokenLifetime: 7776000, // 90 days
 		IssuedAt:             jwt.TimeFunc().Unix(),
 	}
 
-	fmt.Printf("Issued tokens: %+v\n and access token: %s", issued, token)
 	return &issued, token, nil
 }
 
@@ -123,7 +157,7 @@ func generateChallenge(verifier string) string {
 	return response[:len(response)-1]
 }
 
-func validateTokenRequest(r *TokenRequest, acca *AuthorizationCodeChallengeAssociation) *ErrorResponse {
+func validateTokenRequest(r *TokenRequest, acca *store.AuthorizationCodeChallengeAssociation) *ErrorResponse {
 	if r.Code == "" {
 		return &ErrorResponse{
 			Error:            "invalid_request",
@@ -162,7 +196,7 @@ func validateTokenRequest(r *TokenRequest, acca *AuthorizationCodeChallengeAssoc
 	return nil
 }
 
-func validateCodeChallenge(r *TokenRequest, acca *AuthorizationCodeChallengeAssociation) *ErrorResponse {
+func validateCodeChallenge(r *TokenRequest, acca *store.AuthorizationCodeChallengeAssociation) *ErrorResponse {
 	if acca.CodeChallengeMethod == "S256" {
 		challenge := generateChallenge(r.CodeVerifier)
 
