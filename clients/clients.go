@@ -19,5 +19,6 @@ func Github() *Client {
 		AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
 		TokenEndpoint:         "https://github.com/login/oauth/access_token",
 		RedirectUri:           "http://localhost:8080/oauth/callback",
+		Scope:                 "read:user",
 	}
 }
