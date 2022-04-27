@@ -1,0 +1,5 @@
+package external
+
+func Challenge(c *Client) {
+	// TODO: Initiate external authentication
+}

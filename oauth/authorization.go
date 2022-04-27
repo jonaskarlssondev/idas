@@ -1,4 +1,4 @@
-package endpoints
+package oauth
 
 import (
 	"idas/store"

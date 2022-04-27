@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"idas/endpoints"
+	"idas/oauth"
 	s "idas/store"
 	"log"
 	"net/http"
@@ -20,11 +20,12 @@ func main() {
 
 	r.HandleFunc("/", home).Methods("GET")
 
-	r.HandleFunc("/authorize", authorization).Methods("GET")
-	r.HandleFunc("/token", token).Methods("POST")
+	r.HandleFunc("oauth/authorize", authorization).Methods("GET")
+	r.HandleFunc("oauth/token", token).Methods("POST")
 
 	handler := cors.Default().Handler(r)
 	// TODO: Set up TLS
+
 	err := http.ListenAndServe("127.0.0.1:8080", handler)
 	if err != nil {
 		panic(err)
@@ -36,7 +37,7 @@ func home(w http.ResponseWriter, r *http.Request) {
 }
 
 func authorization(w http.ResponseWriter, r *http.Request) {
-	response, authzError := endpoints.AuthorizationEndpoint(w, r, store)
+	response, authzError := oauth.AuthorizationEndpoint(w, r, store)
 	if authzError != nil {
 		writeResponse(w, authzError, http.StatusBadRequest)
 	}
@@ -48,7 +49,7 @@ func authorization(w http.ResponseWriter, r *http.Request) {
 }
 
 func token(w http.ResponseWriter, r *http.Request) {
-	response, authzError := endpoints.TokenEndpoint(w, r, store)
+	response, authzError := oauth.TokenEndpoint(w, r, store)
 	if authzError != nil {
 		writeResponse(w, authzError, http.StatusBadRequest)
 	}
