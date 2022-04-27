@@ -20,8 +20,8 @@ func main() {
 
 	r.HandleFunc("/", home).Methods("GET")
 
-	r.HandleFunc("oauth/authorize", authorization).Methods("GET")
-	r.HandleFunc("oauth/token", token).Methods("POST")
+	r.HandleFunc("/oauth/authorize", authorization).Methods("GET")
+	r.HandleFunc("/oauth/token", token).Methods("POST")
 
 	handler := cors.Default().Handler(r)
 	// TODO: Set up TLS
