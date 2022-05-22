@@ -1,55 +1,8 @@
 package oauth
 
-import (
-	"idas/store"
-	"testing"
-)
-
-func TestValidRequests(t *testing.T) {
-	s := store.NewStore()
-	requests := []AuthorizationRequest{
-		{
-			ResponseType:        "code",
-			ClientId:            "client_id",
-			RedirectUri:         "url",
-			State:               "state",
-			CodeChallenge:       "challenge",
-			CodeChallengeMethod: "plain",
-		},
-		{
-			ResponseType:        "code",
-			ClientId:            "client_id",
-			RedirectUri:         "url",
-			State:               "state",
-			CodeChallenge:       "challenge",
-			CodeChallengeMethod: "plain",
-		},
-	}
-
-	for _, r := range requests {
-		response, err := authorization(s, &r)
-		if err != nil {
-			t.Errorf("Did not expect an error: %+v", err)
-		}
-
-		gotState := response.State
-		wantState := r.State
-
-		gotCode := response.Code
-		dontWantCode := ""
-
-		if gotState != wantState {
-			t.Errorf("Expected state to be '%s', got '%s'", wantState, gotState)
-		}
-
-		if gotCode == dontWantCode {
-			t.Errorf("Expected code to not be '%s', got '%s'", dontWantCode, gotCode)
-		}
-	}
-}
+import "testing"
 
 func TestInvalidRequests(t *testing.T) {
-	s := store.NewStore()
 	requests := []AuthorizationRequest{
 		{
 			ResponseType: "not_code",
@@ -82,7 +35,7 @@ func TestInvalidRequests(t *testing.T) {
 	}
 
 	for _, r := range requests {
-		_, err := authorization(s, &r)
+		err := validateAuthorizationRequest(&r)
 		if err == nil {
 			t.Errorf("Expected error for request: %+v", r)
 		}

@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"idas/clients"
+	"idas/external"
 	"idas/oauth"
 	s "idas/store"
 	"log"
@@ -11,9 +13,15 @@ import (
 	"github.com/rs/cors"
 )
 
-var (
-	store = s.NewStore()
-)
+var store s.Store
+
+func init() {
+	store = *s.NewStore()
+	store.Clients["bird"] = clients.Client{
+		ClientId:    "bird",
+		RedirectUri: "http://localhost:3000/auth/callback/bird",
+	}
+}
 
 func main() {
 	r := mux.NewRouter()
@@ -22,6 +30,8 @@ func main() {
 
 	r.HandleFunc("/oauth/authorize", authorization).Methods("GET")
 	r.HandleFunc("/oauth/token", token).Methods("POST")
+
+	r.HandleFunc("/oauth/external/callback", callback).Methods("GET")
 
 	handler := cors.Default().Handler(r)
 	// TODO: Set up TLS
@@ -37,24 +47,26 @@ func home(w http.ResponseWriter, r *http.Request) {
 }
 
 func authorization(w http.ResponseWriter, r *http.Request) {
-	response, authzError := oauth.AuthorizationEndpoint(w, r, store)
+	authzError := oauth.AuthorizationEndpoint(w, r, &store)
 	if authzError != nil {
 		writeResponse(w, authzError, http.StatusBadRequest)
 	}
-
-	w.Header().Set("Content-Type", "application/x-www-form-urlencoded")
-	url := response.RedirectUri + "?code=" + response.Code + "&state=" + response.State
-
-	http.Redirect(w, r, url, http.StatusFound)
 }
 
 func token(w http.ResponseWriter, r *http.Request) {
-	response, authzError := oauth.TokenEndpoint(w, r, store)
+	response, authzError := oauth.TokenEndpoint(w, r, &store)
 	if authzError != nil {
 		writeResponse(w, authzError, http.StatusBadRequest)
 	}
 
 	writeResponse(w, response, http.StatusOK)
+}
+
+func callback(w http.ResponseWriter, r *http.Request) {
+	err := external.CallbackEndpoint(w, r, &store)
+	if err != nil {
+		writeResponse(w, err, http.StatusBadRequest)
+	}
 }
 
 func writeResponse(w http.ResponseWriter, resp interface{}, status int) {

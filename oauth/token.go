@@ -32,9 +32,9 @@ type TokenResponse struct {
 func TokenEndpoint(w http.ResponseWriter, r *http.Request, s *store.Store) (*TokenResponse, *ErrorResponse) {
 	// If the code exists, it should be deleted to prevent replay attacks
 	code := r.FormValue("code")
-	defer delete(s.Acca, code)
+	defer delete(s.AuthCodeAssociation, code)
 
-	_, ok := s.Acca[code]
+	_, ok := s.AuthCodeAssociation[code]
 
 	// Validate that the code has been persisted as part of previous request and hasn't expired yet.
 	if !ok {
@@ -102,7 +102,7 @@ func token(s *store.Store, r *TokenRequest) (*TokenResponse, *ErrorResponse) {
 func AuthorizationCodeGrantType(s *store.Store, r *TokenRequest) (*store.IssuedRefreshToken, string, *ErrorResponse) {
 	var issued store.IssuedRefreshToken
 
-	acca, ok := s.Acca[r.Code]
+	acca, ok := s.AuthCodeAssociation[r.Code]
 	if !ok {
 		return &issued, "", &ErrorResponse{
 			Error:            "invalid_requst",
@@ -138,7 +138,7 @@ func AuthorizationCodeGrantType(s *store.Store, r *TokenRequest) (*store.IssuedR
 		}
 	}
 
-	refreshToken := generateCode(32)
+	refreshToken := crypto.GenerateCode(32)
 
 	issued = store.IssuedRefreshToken{
 		RefreshToken:         refreshToken,

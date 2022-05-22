@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io/ioutil"
+	"math/rand"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -81,4 +82,15 @@ func loadKey(path string) (any, error) {
 
 	// Will only return data if no errors.
 	return x509.ParsePKCS8PrivateKey(block.Bytes)
+}
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// Generate n length strings picking from the given assortment from letterBytes
+func GenerateCode(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
 }

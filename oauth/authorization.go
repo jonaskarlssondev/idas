@@ -1,11 +1,12 @@
 package oauth
 
 import (
+	"idas/clients"
+	"idas/crypto"
+	"idas/external"
 	"idas/store"
-	"math/rand"
 	"net/http"
 	"net/url"
-	"time"
 )
 
 // Authorization code flow request input
@@ -19,17 +20,25 @@ type AuthorizationRequest struct {
 	CodeChallengeMethod string
 }
 
-// Authorization code flow response output
-type AuthorizationResponse struct {
-	RedirectUri string
-	Code        string
-	State       string
+type ErrorResponse struct {
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
 }
 
-func AuthorizationEndpoint(w http.ResponseWriter, r *http.Request, s *store.Store) (*AuthorizationResponse, *ErrorResponse) {
+func AuthorizationEndpoint(w http.ResponseWriter, r *http.Request, s *store.Store) *ErrorResponse {
+	// Confirm client is registered
+	client, ok := s.Clients[r.FormValue("client_id")]
+	if !ok {
+		return &ErrorResponse{
+			Error:            "invalid_client",
+			ErrorDescription: "The client is not registered.",
+		}
+	}
+
+	// Make sure the request is will eventually return to a valid endpoint
 	redirect_uri, err := url.Parse(r.FormValue("redirect_uri"))
-	if err != nil {
-		return nil, &ErrorResponse{
+	if err != nil || client.RedirectUri != redirect_uri.String() {
+		return &ErrorResponse{
 			Error:            "invalid_request",
 			ErrorDescription: "Invalid redirect_uri",
 		}
@@ -45,74 +54,57 @@ func AuthorizationEndpoint(w http.ResponseWriter, r *http.Request, s *store.Stor
 		CodeChallengeMethod: r.FormValue("code_challenge_method"),
 	}
 
-	response, authzError := authorization(s, req)
+	if req.CodeChallengeMethod == "" {
+		req.CodeChallengeMethod = "plain"
+	}
+
+	authzError := validateAuthorizationRequest(req)
 	if authzError != nil {
-		return nil, authzError
+		return authzError
 	}
 
-	return response, nil
-}
-
-// Authorization is the entry point for the authorization grant process.
-//
-// It currently only supports the "code" response type as part of the authorization code flow with PKCE.
-// The code is valid for 1 minute.
-func authorization(s *store.Store, r *AuthorizationRequest) (*AuthorizationResponse, *ErrorResponse) {
-	if r.CodeChallengeMethod == "" {
-		r.CodeChallengeMethod = "plain"
+	var provider clients.Provider
+	// Custom optional property for requesting an external provider
+	if r.FormValue("provider") != "" {
+		provider, ok = s.Providers[r.FormValue("provider")]
+		if !ok {
+			return &ErrorResponse{
+				Error:            "invalid_request",
+				ErrorDescription: "The requested provider is not registered.",
+			}
+		}
+	} else {
+		// TODO: Let user select provider
+		// For now, default to github
+		provider = *clients.Github()
 	}
 
-	authzError := validateAuthorizationRequest(r)
-	if authzError != nil {
-		return nil, authzError
+	acca := store.AuthorizationCodeChallengeAssociation{
+		Code:                "",
+		CodeChallenge:       req.CodeChallenge,
+		CodeChallengeMethod: req.CodeChallengeMethod,
+		Scope:               req.Scope,
+		ClientId:            req.ClientId,
+		RedirectUri:         req.RedirectUri,
+		State:               req.State,
 	}
 
-	// generates reasonably random code of length 32.
-	code := generateCode(32)
+	providerState := crypto.GenerateCode(16)
 
-	state := store.AuthorizationCodeChallengeAssociation{
-		Code:                code,
-		CodeChallenge:       r.CodeChallenge,
-		CodeChallengeMethod: r.CodeChallengeMethod,
-		Scope:               r.Scope,
-		ClientId:            r.ClientId,
-		RedirectUri:         r.RedirectUri,
+	s.AuthCodeAssociation[providerState] = acca
+	s.Requests[providerState] = store.Requests{
+		RequestType: store.Provider,
+		Provider:    provider,
 	}
 
-	// Persist required information for the following expected token request
-	s.Acca[code] = state
-
-	// Delete code after 1 minute
-	defer func() {
-		go sleepDelete(s, code)
-	}()
-
-	return &AuthorizationResponse{
-		RedirectUri: r.RedirectUri,
-		Code:        code,
-		State:       r.State,
-	}, nil
-}
-
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-// Generate n length strings picking from the given assortment from letterBytes
-func generateCode(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	extReq := external.AuthorizationRequest{
+		Provider: provider,
+		State:    providerState,
 	}
-	return string(b)
-}
 
-func sleepDelete(s *store.Store, code string) {
-	time.Sleep(time.Minute)
-	delete(s.Acca, code)
-}
+	external.Challenge(w, r, &extReq)
 
-type ErrorResponse struct {
-	Error            string `json:"error"`
-	ErrorDescription string `json:"error_description"`
+	return nil
 }
 
 // Checks for the existing and valid request parameters and responds aligned with 5.2. of RFC 6749
@@ -124,7 +116,6 @@ func validateAuthorizationRequest(r *AuthorizationRequest) *ErrorResponse {
 		}
 	}
 	if r.ClientId == "" {
-		// TODO: Check if client is registered
 		return &ErrorResponse{
 			Error:            "invalid_request",
 			ErrorDescription: "The 'client_id' parameter is required.",
