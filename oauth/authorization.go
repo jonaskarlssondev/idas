@@ -1,16 +1,16 @@
 package oauth
 
 import (
-	"idas/clients"
 	"idas/crypto"
-	"idas/external"
+	"idas/models"
 	"idas/store"
 	"net/http"
 	"net/url"
+	"time"
 )
 
-// Authorization code flow request input
-type AuthorizationRequest struct {
+// authorizationRequest ...
+type authorizationRequest struct {
 	ResponseType        string
 	ClientId            string
 	RedirectUri         string
@@ -20,34 +20,68 @@ type AuthorizationRequest struct {
 	CodeChallengeMethod string
 }
 
-type ErrorResponse struct {
-	Error            string `json:"error"`
-	ErrorDescription string `json:"error_description"`
+func Authorize(cache *store.Cache, c *models.Client, w http.ResponseWriter, r *http.Request) (*models.AuthorizationRequest, *ErrorResponse) {
+	req := decode(r)
+
+	err := validate(req, c)
+	if err != nil {
+		return nil, err
+	}
+
+	// Let users request a specific external identity provider
+	providerKey := r.FormValue("provider")
+	if providerKey == "" {
+		providerKey = "github"
+	}
+
+	provider, ok := cache.Providers[providerKey]
+	if !ok {
+		return nil, &ErrorResponse{
+			Error:            "invalid_request",
+			ErrorDescription: "The requested provider is not registered.",
+		}
+	}
+
+	// Generate state against 3rd party, which is the key to both the client incoming request, and the external outbound request.
+	state := crypto.GenerateCode(16)
+
+	// generate authorization code and save it to the cache
+	code := crypto.GenerateCode(16)
+
+	// Persist until return from 3rd party auth OR a minute has passed.
+	cache.AuthorizationCodeChallenge[state] = &models.AuthorizationCodeChallenge{
+		Code:                code,
+		CodeChallenge:       req.CodeChallenge,
+		CodeChallengeMethod: req.CodeChallengeMethod,
+		ClientId:            req.ClientId,
+		RedirectUri:         req.RedirectUri,
+		Scope:               req.Scope,
+		State:               req.State,
+	}
+
+	// Delete code after 1 minute
+	go func() {
+		time.Sleep(time.Minute)
+		delete(cache.AuthorizationCodeChallenge, state)
+	}()
+
+	// Generate and cache request against 3rd party identity provider
+	request := &models.AuthorizationRequest{
+		Provider: provider,
+		State:    state,
+	}
+
+	cache.ExternalRequests[state] = request
+
+	return request, nil
 }
 
-func AuthorizationEndpoint(w http.ResponseWriter, r *http.Request, s *store.Store) *ErrorResponse {
-	// Confirm client is registered
-	client, ok := s.Clients[r.FormValue("client_id")]
-	if !ok {
-		return &ErrorResponse{
-			Error:            "invalid_client",
-			ErrorDescription: "The client is not registered.",
-		}
-	}
-
-	// Make sure the request is will eventually return to a valid endpoint
-	redirect_uri, err := url.Parse(r.FormValue("redirect_uri"))
-	if err != nil || client.RedirectUri != redirect_uri.String() {
-		return &ErrorResponse{
-			Error:            "invalid_request",
-			ErrorDescription: "Invalid redirect_uri",
-		}
-	}
-
-	req := &AuthorizationRequest{
+// decode ...
+func decode(r *http.Request) *authorizationRequest {
+	req := &authorizationRequest{
 		ResponseType:        r.FormValue("response_type"),
 		ClientId:            r.FormValue("client_id"),
-		RedirectUri:         redirect_uri.String(),
+		RedirectUri:         r.FormValue("redirect_uri"),
 		Scope:               r.FormValue("scope"),
 		State:               r.FormValue("state"),
 		CodeChallenge:       r.FormValue("code_challenge"),
@@ -58,73 +92,38 @@ func AuthorizationEndpoint(w http.ResponseWriter, r *http.Request, s *store.Stor
 		req.CodeChallengeMethod = "plain"
 	}
 
-	authzError := validateAuthorizationRequest(req)
-	if authzError != nil {
-		return authzError
-	}
-
-	var provider clients.Provider
-	// Custom optional property for requesting an external provider
-	if r.FormValue("provider") != "" {
-		provider, ok = s.Providers[r.FormValue("provider")]
-		if !ok {
-			return &ErrorResponse{
-				Error:            "invalid_request",
-				ErrorDescription: "The requested provider is not registered.",
-			}
-		}
-	} else {
-		// TODO: Let user select provider
-		// For now, default to github
-		provider = *clients.Github()
-	}
-
-	acca := store.AuthorizationCodeChallengeAssociation{
-		Code:                "",
-		CodeChallenge:       req.CodeChallenge,
-		CodeChallengeMethod: req.CodeChallengeMethod,
-		Scope:               req.Scope,
-		ClientId:            req.ClientId,
-		RedirectUri:         req.RedirectUri,
-		State:               req.State,
-	}
-
-	providerState := crypto.GenerateCode(16)
-
-	s.AuthCodeAssociation[providerState] = acca
-	s.Requests[providerState] = store.Requests{
-		RequestType: store.Provider,
-		Provider:    provider,
-	}
-
-	extReq := external.AuthorizationRequest{
-		Provider: provider,
-		State:    providerState,
-	}
-
-	external.Challenge(w, r, &extReq)
-
-	return nil
+	return req
 }
 
-// Checks for the existing and valid request parameters and responds aligned with 5.2. of RFC 6749
-func validateAuthorizationRequest(r *AuthorizationRequest) *ErrorResponse {
+// validate checks for the existing and valid request parameters and responds aligned with 5.2 of RFC 6749
+func validate(r *authorizationRequest, c *models.Client) *ErrorResponse {
 	if r.ResponseType != "code" {
 		return &ErrorResponse{
 			Error:            "unsupported_grant_type",
-			ErrorDescription: "Only the 'code' response type is supported",
+			ErrorDescription: "Only the 'code' response type is supported.",
 		}
 	}
+
 	if r.ClientId == "" {
 		return &ErrorResponse{
 			Error:            "invalid_request",
 			ErrorDescription: "The 'client_id' parameter is required.",
 		}
 	}
+
 	if r.RedirectUri == "" {
 		return &ErrorResponse{
 			Error:            "invalid_request",
 			ErrorDescription: "The 'redirect_uri' parameter is required.",
+		}
+	}
+
+	// Make sure the request will eventually return to a valid endpoint
+	redirect_uri, err := url.Parse(r.RedirectUri)
+	if err != nil || c.RedirectUri != redirect_uri.String() {
+		return &ErrorResponse{
+			Error:            "invalid_request",
+			ErrorDescription: "Invalid redirect_uri",
 		}
 	}
 

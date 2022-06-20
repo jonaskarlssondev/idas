@@ -1,20 +1,12 @@
 package external
 
 import (
-	"idas/clients"
-	"idas/settings"
+	"idas/models"
 	"net/http"
 )
 
-type AuthorizationRequest struct {
-	Provider clients.Provider
-	State    string
-}
-
-func Challenge(w http.ResponseWriter, r *http.Request, req *AuthorizationRequest) {
-	// TODO: Build request based on authorization type
-
-	redirectUri := settings.AuthzServerMetadata.SignInCallbackUri
+func Challenge(w http.ResponseWriter, r *http.Request, req *models.AuthorizationRequest) {
+	redirectUri := req.CallbackUri
 
 	url := req.Provider.AuthorizationEndpoint +
 		"?client_id=" + req.Provider.ClientId +

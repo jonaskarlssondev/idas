@@ -1,86 +1,77 @@
 package main
 
 import (
-	"encoding/json"
-	"idas/clients"
-	"idas/external"
-	"idas/oauth"
-	s "idas/store"
-	"log"
+	"fmt"
+	"idas/config"
+	"idas/crypto"
+	"idas/models"
+	"idas/server"
+	"idas/store"
 	"net/http"
+	"os"
+	"runtime"
 
-	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 	"github.com/rs/cors"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
-var store s.Store
-
-func init() {
-	store = *s.NewStore()
-	store.Clients["bird"] = clients.Client{
-		ClientId:    "bird",
-		RedirectUri: "http://localhost:3000/auth/callback/bird",
-	}
-}
-
 func main() {
-	r := mux.NewRouter()
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		os.Exit(1)
+	}
+}
 
-	r.HandleFunc("/", home).Methods("GET")
+func run() error {
+	// Load environment variables if not starting from docker image
+	if runtime.GOOS == "windows" {
+		err := godotenv.Load()
+		if err != nil {
+			return err
+		}
+	}
 
-	r.HandleFunc("/oauth/authorize", authorization).Methods("GET")
-	r.HandleFunc("/oauth/token", token).Methods("POST")
+	// Load certificates
+	crypto.InitialiseCertificates()
 
-	r.HandleFunc("/oauth/external/callback", callback).Methods("GET")
-
-	handler := cors.Default().Handler(r)
-	// TODO: Set up TLS
-
-	err := http.ListenAndServe("127.0.0.1:8080", handler)
+	dsn := os.Getenv("DSN")
+	db, err := setupDatabase(dsn)
 	if err != nil {
-		panic(err)
-	}
-}
-
-func home(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Welcome to the Identity and Authentication Server!"))
-}
-
-func authorization(w http.ResponseWriter, r *http.Request) {
-	authzError := oauth.AuthorizationEndpoint(w, r, &store)
-	if authzError != nil {
-		writeResponse(w, authzError, http.StatusBadRequest)
-	}
-}
-
-func token(w http.ResponseWriter, r *http.Request) {
-	response, authzError := oauth.TokenEndpoint(w, r, &store)
-	if authzError != nil {
-		writeResponse(w, authzError, http.StatusBadRequest)
+		return err
 	}
 
-	writeResponse(w, response, http.StatusOK)
+	// Setup the in memory cache for requests, providers.
+	cache := store.NewMapCache()
+
+	// Setup a server
+	srv := server.NewServer()
+	srv.SetDB(db)
+
+	srv.SetCache(cache)
+	srv.RegisterProviders()
+
+	srv.SetConfig(config.NewServerMetadata())
+
+	// Setup CORS
+	handler := cors.AllowAll().Handler(srv)
+
+	// TODO: Setup TLS
+	return http.ListenAndServe("127.0.0.1:8080", handler)
 }
 
-func callback(w http.ResponseWriter, r *http.Request) {
-	err := external.CallbackEndpoint(w, r, &store)
+func setupDatabase(dsn string) (*gorm.DB, error) {
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
 	if err != nil {
-		writeResponse(w, err, http.StatusBadRequest)
-	}
-}
-
-func writeResponse(w http.ResponseWriter, resp interface{}, status int) {
-	if status == http.StatusBadRequest {
-		log.Printf("Error on request: %s\n", resp)
+		return nil, err
 	}
 
-	response, err := json.Marshal(resp)
-	if err != nil {
-		log.Printf("Failed to convert response to json: %+v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal_server_error"))
-	}
+	db.AutoMigrate(&models.User{})
+	db.AutoMigrate(&models.Client{})
+	db.AutoMigrate(&models.RefreshToken{})
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(response)
+	return db, nil
 }

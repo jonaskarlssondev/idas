@@ -8,8 +8,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
-
-	"github.com/joho/godotenv"
+	"time"
 )
 
 var (
@@ -28,10 +27,7 @@ func GetSigningKey() *rsa.PrivateKey {
 }
 
 // Load certificates before starting the server.
-func init() {
-	// Load .env from current dir
-	godotenv.Load()
-
+func InitialiseCertificates() {
 	cert, err := loadCert(os.Getenv("SIGNING_CERT_PATH"))
 	if err != nil {
 		panic(err)
@@ -52,7 +48,7 @@ func init() {
 	signing_key = rsaKey
 }
 
-// Loads a x509 certificate in ASN.1 DER form from a relative file path.
+// loadCert loads a x509 certificate in ASN.1 DER form from a relative file path.
 func loadCert(path string) (*x509.Certificate, error) {
 	file, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -68,7 +64,7 @@ func loadCert(path string) (*x509.Certificate, error) {
 	return x509.ParseCertificate(block.Bytes)
 }
 
-// Loads an unencrypted private key in PKCS #8, ASN.1 DER form from the relative file path.
+// loadKey loads an unencrypted private key in PKCS #8, ASN.1 DER form from the relative file path.
 func loadKey(path string) (any, error) {
 	file, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -86,11 +82,13 @@ func loadKey(path string) (any, error) {
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-// Generate n length strings picking from the given assortment from letterBytes
+var seed = rand.New(rand.NewSource(time.Now().UnixNano()))
+
+// GenerateCode generates an n length string picking from the given assortment in [A-Za-z0-9]
 func GenerateCode(n int) string {
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+		b[i] = letterBytes[seed.Intn(len(letterBytes))]
 	}
 	return string(b)
 }
